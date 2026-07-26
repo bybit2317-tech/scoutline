@@ -1,5 +1,6 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { LANGUAGES, translations, positionKeys, positionLabels } from "./i18n.js";
+import { supabase } from "./supabaseClient.js";
 
 // ---------- Platform config ----------
 // In a real deployment, the receiving wallet address and fee would live in
@@ -93,6 +94,95 @@ const initialOpportunities = [
     contact: { email: "trials@ashcombetownfc.co.uk", phone: "+44 1622 555 019" },
   },
 ];
+
+// ---------- Database <-> app data mapping ----------
+// Supabase columns use snake_case; the app uses camelCase internally.
+// These helpers translate between the two so the rest of the app doesn't
+// need to change its existing field names.
+function oppFromRow(row) {
+  return {
+    id: row.id,
+    club: row.club,
+    country: row.country,
+    region: row.region,
+    postedBy: "Admin",
+    positionKey: row.position_key,
+    ageRange: row.age_range,
+    footPref: row.foot_pref,
+    level: row.level,
+    requirements: row.requirements || [],
+    blurb: row.blurb,
+    slots: row.slots,
+    deadline: row.deadline,
+    status: row.status,
+    contact: { email: row.contact_email, phone: row.contact_phone },
+  };
+}
+
+function oppToRow(opp) {
+  return {
+    id: opp.id,
+    club: opp.club,
+    country: opp.country,
+    region: opp.region,
+    position_key: opp.positionKey,
+    age_range: opp.ageRange,
+    foot_pref: opp.footPref,
+    level: opp.level,
+    requirements: opp.requirements,
+    blurb: opp.blurb,
+    slots: opp.slots,
+    deadline: opp.deadline,
+    status: opp.status,
+    contact_email: opp.contact?.email || "",
+    contact_phone: opp.contact?.phone || "",
+  };
+}
+
+function appFromRow(row) {
+  return {
+    id: row.id,
+    oppId: row.opp_id,
+    club: row.club,
+    name: row.name,
+    age: row.age,
+    height: row.height,
+    weight: row.weight,
+    foot: row.foot,
+    positionKey: row.position_key,
+    country: row.country,
+    notes: row.notes,
+    status: row.status,
+    paid: row.paid,
+    paymentStatus: row.payment_status,
+    txId: row.tx_id,
+    contactEmail: row.contact_email,
+    contactPhone: row.contact_phone,
+    submittedAt: row.submitted_at,
+  };
+}
+
+function appToRow(app) {
+  return {
+    id: app.id,
+    opp_id: app.oppId,
+    club: app.club,
+    name: app.name,
+    age: app.age,
+    height: app.height,
+    weight: app.weight,
+    foot: app.foot,
+    position_key: app.positionKey,
+    country: app.country,
+    notes: app.notes,
+    status: app.status,
+    paid: app.paid,
+    payment_status: app.paymentStatus,
+    tx_id: app.txId,
+    contact_email: app.contactEmail,
+    contact_phone: app.contactPhone,
+  };
+}
 
 const emptyForm = {
   name: "",
@@ -194,8 +284,9 @@ export default function ScoutLink() {
       return false;
     }
   });
-  const [opportunities, setOpportunities] = useState(initialOpportunities);
+  const [opportunities, setOpportunities] = useState([]);
   const [applications, setApplications] = useState([]); // {id, oppId, ...playerInfo, status, paid}
+  const [dataLoading, setDataLoading] = useState(true);
   const [selectedOpp, setSelectedOpp] = useState(null);
   const [payingApp, setPayingApp] = useState(null);
   const [applyForm, setApplyForm] = useState(emptyForm);
@@ -214,6 +305,48 @@ export default function ScoutLink() {
     deadline: "",
   });
 
+  // Load opportunities and applications from the database when the page
+  // first loads, so data persists across refreshes and devices instead of
+  // living only in this browser tab's memory.
+  useEffect(() => {
+    async function loadData() {
+      setDataLoading(true);
+      try {
+        const { data: oppRows, error: oppError } = await supabase
+          .from("opportunities")
+          .select("*")
+          .order("created_at", { ascending: false });
+
+        if (oppError) throw oppError;
+
+        if (oppRows && oppRows.length > 0) {
+          setOpportunities(oppRows.map(oppFromRow));
+        } else {
+          // First time the database is used — seed it with the sample
+          // opportunities so the board isn't empty, then load them back.
+          const seedRows = initialOpportunities.map(oppToRow);
+          const { error: seedError } = await supabase.from("opportunities").insert(seedRows);
+          if (!seedError) {
+            setOpportunities(initialOpportunities);
+          }
+        }
+
+        const { data: appRows, error: appError } = await supabase
+          .from("applications")
+          .select("*")
+          .order("submitted_at", { ascending: false });
+
+        if (appError) throw appError;
+        setApplications((appRows || []).map(appFromRow));
+      } catch (err) {
+        console.error("Failed to load data from database:", err);
+      } finally {
+        setDataLoading(false);
+      }
+    }
+    loadData();
+  }, []);
+
   function changeLang(code) {
     setLang(code);
     try {
@@ -226,7 +359,7 @@ export default function ScoutLink() {
     setTimeout(() => setToast(null), 2800);
   }
 
-  function submitApplication(e) {
+  async function submitApplication(e) {
     e.preventDefault();
     if (!applyForm.name || !applyForm.age || !applyForm.positionKey) {
       showToast(t.apply.fillRequired);
@@ -245,6 +378,14 @@ export default function ScoutLink() {
       txId: "",
       submittedAt: new Date().toISOString(),
     };
+
+    const { error } = await supabase.from("applications").insert(appToRow(newApp));
+    if (error) {
+      console.error("Failed to save application:", error);
+      showToast("Something went wrong submitting your application. Please try again.");
+      return;
+    }
+
     setApplications((prev) => [newApp, ...prev]);
     setApplyForm(emptyForm);
     setSelectedOpp(null);
@@ -252,13 +393,27 @@ export default function ScoutLink() {
     showToast(t.apply.sentTo(newApp.club));
   }
 
-  function updateAppStatus(appId, status) {
+  async function updateAppStatus(appId, status) {
+    const { error } = await supabase.from("applications").update({ status }).eq("id", appId);
+    if (error) {
+      console.error("Failed to update application status:", error);
+      return;
+    }
     setApplications((prev) =>
       prev.map((a) => (a.id === appId ? { ...a, status } : a))
     );
   }
 
-  function submitPaymentForReview(appId, txId) {
+  async function submitPaymentForReview(appId, txId) {
+    const { error } = await supabase
+      .from("applications")
+      .update({ tx_id: txId, payment_status: "submitted" })
+      .eq("id", appId);
+    if (error) {
+      console.error("Failed to submit payment for review:", error);
+      showToast("Something went wrong submitting your payment. Please try again.");
+      return;
+    }
     setApplications((prev) =>
       prev.map((a) =>
         a.id === appId ? { ...a, txId, paymentStatus: "submitted" } : a
@@ -269,13 +424,21 @@ export default function ScoutLink() {
     setPayingApp(null);
   }
 
-  function confirmPayment(appId) {
+  async function confirmPayment(appId) {
+    const { error } = await supabase
+      .from("applications")
+      .update({ paid: true, payment_status: "confirmed" })
+      .eq("id", appId);
+    if (error) {
+      console.error("Failed to confirm payment:", error);
+      return;
+    }
     setApplications((prev) =>
       prev.map((a) => (a.id === appId ? { ...a, paid: true, paymentStatus: "confirmed" } : a))
     );
   }
 
-  function postOpportunity(e) {
+  async function postOpportunity(e) {
     e.preventDefault();
     if (!postForm.club || !postForm.positionKey || !postForm.country) {
       showToast(t.admin.requiredFields);
@@ -299,7 +462,16 @@ export default function ScoutLink() {
       slots: Number(postForm.slots) || 1,
       deadline: postForm.deadline || "TBD",
       status: "open",
+      contact: { email: "", phone: "" },
     };
+
+    const { error } = await supabase.from("opportunities").insert(oppToRow(newOpp));
+    if (error) {
+      console.error("Failed to save opportunity:", error);
+      showToast("Something went wrong posting this opportunity. Please try again.");
+      return;
+    }
+
     setOpportunities((prev) => [newOpp, ...prev]);
     setPostForm({
       club: "",
@@ -328,6 +500,21 @@ export default function ScoutLink() {
       }}
     >
       <GoogleFonts />
+      {dataLoading ? (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            minHeight: "100vh",
+            color: "rgba(243,241,233,0.6)",
+            fontSize: "0.95rem",
+          }}
+        >
+          Loading…
+        </div>
+      ) : (
+        <>
       {view !== "admin" && view !== "adminLogin" && (
         <TopNav view={view} setView={setView} t={t} lang={lang} changeLang={changeLang} />
       )}
@@ -452,6 +639,8 @@ export default function ScoutLink() {
       )}
 
       <Footer t={t} />
+        </>
+      )}
     </div>
   );
 }
