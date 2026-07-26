@@ -112,6 +112,7 @@ function StatusStamp({ status, t }) {
     approved: { label: t.myApps.statusApproved, color: "#2E7D4F", rotate: "-8deg" },
     rejected: { label: t.myApps.statusRejected, color: "#8B4A3D", rotate: "-5deg" },
     unlocked: { label: t.myApps.statusUnlocked, color: "#C9A54E", rotate: "-4deg" },
+    submitted: { label: t.myApps.statusSubmitted, color: "#C9A54E", rotate: "-3deg" },
   };
   const s = map[status];
   if (!s) return null;
@@ -240,6 +241,8 @@ export default function ScoutLink() {
       ...applyForm,
       status: "pending",
       paid: false,
+      paymentStatus: null,
+      txId: "",
       submittedAt: new Date().toISOString(),
     };
     setApplications((prev) => [newApp, ...prev]);
@@ -255,13 +258,21 @@ export default function ScoutLink() {
     );
   }
 
-  function markAppPaid(appId) {
+  function submitPaymentForReview(appId, txId) {
     setApplications((prev) =>
-      prev.map((a) => (a.id === appId ? { ...a, paid: true } : a))
+      prev.map((a) =>
+        a.id === appId ? { ...a, txId, paymentStatus: "submitted" } : a
+      )
     );
     showToast(t.pay.confirmedToast);
     setView("myApps");
     setPayingApp(null);
+  }
+
+  function confirmPayment(appId) {
+    setApplications((prev) =>
+      prev.map((a) => (a.id === appId ? { ...a, paid: true, paymentStatus: "confirmed" } : a))
+    );
   }
 
   function postOpportunity(e) {
@@ -385,7 +396,7 @@ export default function ScoutLink() {
       {view === "pay" && payingApp && (
         <PaymentScreen
           app={payingApp}
-          onConfirm={() => markAppPaid(payingApp.id)}
+          onConfirm={(txId) => submitPaymentForReview(payingApp.id, txId)}
           onBack={() => setView("myApps")}
           t={t}
         />
@@ -412,6 +423,7 @@ export default function ScoutLink() {
           setPostForm={setPostForm}
           onPost={postOpportunity}
           onUpdateStatus={updateAppStatus}
+          onConfirmPayment={confirmPayment}
           onLogout={() => {
             setIsAdminAuthed(false);
             try {
@@ -1157,10 +1169,13 @@ function MyApplications({ applications, setView, onPay, t }) {
                     {a.age} · {a.foot}
                   </div>
                 </div>
-                <StatusStamp status={a.paid ? "unlocked" : a.status} t={t} />
+                <StatusStamp
+                  status={a.paid ? "unlocked" : a.paymentStatus === "submitted" ? "submitted" : a.status}
+                  t={t}
+                />
               </div>
 
-              {a.status === "approved" && !a.paid && (
+              {a.status === "approved" && !a.paid && a.paymentStatus !== "submitted" && (
                 <div
                   style={{
                     background: "rgba(201,165,78,0.1)",
@@ -1197,6 +1212,21 @@ function MyApplications({ applications, setView, onPay, t }) {
                 </div>
               )}
 
+              {a.paymentStatus === "submitted" && !a.paid && (
+                <div
+                  style={{
+                    background: "rgba(201,165,78,0.08)",
+                    border: "1px solid rgba(201,165,78,0.3)",
+                    borderRadius: 10,
+                    padding: "14px 16px",
+                    fontSize: "0.85rem",
+                    color: "rgba(243,241,233,0.8)",
+                  }}
+                >
+                  {t.pay.demoNote}
+                </div>
+              )}
+
               {a.paid && (
                 <div
                   style={{
@@ -1224,6 +1254,8 @@ function MyApplications({ applications, setView, onPay, t }) {
 function PaymentScreen({ app, onConfirm, onBack, t }) {
   const [copied, setCopied] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [txId, setTxId] = useState("");
+  const [error, setError] = useState("");
   const btcAmount = (CONNECT_FEE_USD / BTC_USD_RATE).toFixed(8);
 
   function copyAddress() {
@@ -1233,14 +1265,18 @@ function PaymentScreen({ app, onConfirm, onBack, t }) {
   }
 
   function handleConfirm() {
+    if (!txId.trim()) {
+      setError(t.pay.txIdRequired);
+      return;
+    }
+    setError("");
     setConfirming(true);
-    // Simulated confirmation delay — a real integration would poll the
-    // blockchain (via BTCPay Server / Coinbase Commerce / a node) for the
-    // transaction to reach the required number of confirmations before
-    // unlocking anything.
+    // This submits the transaction ID for the admin to manually verify
+    // against the blockchain before contact info unlocks. No automatic
+    // on-chain checking happens here.
     setTimeout(() => {
-      onConfirm();
-    }, 1400);
+      onConfirm(txId.trim());
+    }, 700);
   }
 
   return (
@@ -1332,6 +1368,25 @@ function PaymentScreen({ app, onConfirm, onBack, t }) {
             {copied ? t.pay.copied : t.pay.copy}
           </button>
         </div>
+
+        <label style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
+          <span style={{ fontSize: "0.78rem", fontWeight: 600, color: "rgba(243,241,233,0.6)" }}>
+            {t.pay.txIdLabel}
+          </span>
+          <input
+            value={txId}
+            onChange={(e) => {
+              setTxId(e.target.value);
+              if (error) setError("");
+            }}
+            style={inputStyle}
+            placeholder={t.pay.txIdPh}
+          />
+        </label>
+
+        {error && (
+          <div style={{ color: "#D98B7A", fontSize: "0.82rem", marginBottom: 12 }}>{error}</div>
+        )}
 
         <button
           onClick={handleConfirm}
@@ -1441,7 +1496,7 @@ function AdminLogin({ onSuccess, t }) {
   );
 }
 
-function AdminPanel({ opportunities, applications, postForm, setPostForm, onPost, onUpdateStatus, onLogout, t, posLabels }) {
+function AdminPanel({ opportunities, applications, postForm, setPostForm, onPost, onUpdateStatus, onConfirmPayment, onLogout, t, posLabels }) {
   const [tab, setTab] = useState("applications");
 
   function set(field, val) {
@@ -1540,7 +1595,10 @@ function AdminPanel({ opportunities, applications, postForm, setPostForm, onPost
                   )}
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 10 }}>
-                  <StatusStamp status={a.paid ? "unlocked" : a.status} t={t} />
+                  <StatusStamp
+                    status={a.paid ? "unlocked" : a.paymentStatus === "submitted" ? "submitted" : a.status}
+                    t={t}
+                  />
                   {a.status === "approved" && (
                     <span style={{ fontSize: "0.72rem", color: a.paid ? "#8FD3AA" : "rgba(243,241,233,0.45)" }}>
                       {a.paid ? t.admin.feePaid : t.admin.feeAwaiting}
@@ -1580,6 +1638,51 @@ function AdminPanel({ opportunities, applications, postForm, setPostForm, onPost
                   </div>
                 </div>
               </div>
+
+              {a.status === "approved" && a.paymentStatus === "submitted" && !a.paid && (
+                <div
+                  style={{
+                    marginTop: 14,
+                    background: "rgba(201,165,78,0.08)",
+                    border: "1px solid rgba(201,165,78,0.3)",
+                    borderRadius: 10,
+                    padding: "14px 16px",
+                  }}
+                >
+                  <div style={{ fontSize: "0.78rem", color: "#C9A54E", fontWeight: 700, marginBottom: 6 }}>
+                    {t.admin.txIdShown}
+                  </div>
+                  <code style={{ fontSize: "0.8rem", color: "#F3F1E9", wordBreak: "break-all", display: "block", marginBottom: 10 }}>
+                    {a.txId}
+                  </code>
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                    <a
+                      href={`https://www.blockchain.com/explorer/search?search=${encodeURIComponent(a.txId)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ color: "#8FD3AA", fontSize: "0.8rem", fontWeight: 600, textDecoration: "underline" }}
+                    >
+                      {t.admin.checkOnExplorer}
+                    </a>
+                    <button
+                      onClick={() => onConfirmPayment(a.id)}
+                      style={{
+                        background: "#2E7D4F",
+                        color: "#F3F1E9",
+                        border: "none",
+                        borderRadius: 6,
+                        padding: "8px 14px",
+                        fontSize: "0.8rem",
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        fontFamily: "'Inter', sans-serif",
+                      }}
+                    >
+                      {t.admin.confirmPayment}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           ))}
         </div>
