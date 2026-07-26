@@ -65,7 +65,7 @@ export const translations = {
     },
     myApps: {
       title: "My applications",
-      sub: "Since this is a demo, applications live only in this browser session.",
+      sub: "Track the status of every club you've applied to.",
       emptyText: "You haven't applied to anything yet.",
       browseBoard: "Browse the board",
       approvedNotice: (club) => `You're approved. Pay the one-time connect fee to unlock ${club}'s direct contact info.`,
@@ -144,7 +144,7 @@ export const translations = {
       requiredFields: "Club name, country, and position are required.",
       postedToast: (club) => `${club} posted to the board.`,
     },
-    footer: "SCOUTLINE — prototype build. Data resets on refresh.",
+    footer: "SCOUTLINE — connecting players to real opportunities.",
   },
 
   pt: {
@@ -203,7 +203,7 @@ export const translations = {
     },
     myApps: {
       title: "Minhas candidaturas",
-      sub: "Como isto é uma demonstração, as candidaturas existem apenas nesta sessão do navegador.",
+      sub: "Acompanhe o status de cada clube ao qual você se candidatou.",
       emptyText: "Você ainda não se candidatou a nada.",
       browseBoard: "Ver o quadro de vagas",
       approvedNotice: (club) => `Você foi aprovado. Pague a taxa única de conexão para desbloquear o contato direto de ${club}.`,
@@ -282,7 +282,7 @@ export const translations = {
       requiredFields: "Nome do clube, país e posição são obrigatórios.",
       postedToast: (club) => `${club} publicado no quadro.`,
     },
-    footer: "SCOUTLINE — versão de protótipo. Os dados são reiniciados ao atualizar a página.",
+    footer: "SCOUTLINE — conectando jogadores a oportunidades reais.",
   },
 
   es: {
@@ -341,7 +341,7 @@ export const translations = {
     },
     myApps: {
       title: "Mis solicitudes",
-      sub: "Como esto es una demostración, las solicitudes existen solo en esta sesión del navegador.",
+      sub: "Sigue el estado de cada club al que has aplicado.",
       emptyText: "Aún no has aplicado a nada.",
       browseBoard: "Ver el tablero",
       approvedNotice: (club) => `Fuiste aprobado. Paga la tarifa única de conexión para desbloquear el contacto directo de ${club}.`,
@@ -420,7 +420,7 @@ export const translations = {
       requiredFields: "El nombre del club, país y posición son obligatorios.",
       postedToast: (club) => `${club} publicado en el tablero.`,
     },
-    footer: "SCOUTLINE — versión prototipo. Los datos se reinician al actualizar.",
+    footer: "SCOUTLINE — conectando jugadores con oportunidades reales.",
   },
 };
 
