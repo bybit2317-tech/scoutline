@@ -143,6 +143,7 @@ function appFromRow(row) {
   return {
     id: row.id,
     oppId: row.opp_id,
+    playerId: row.player_id,
     club: row.club,
     name: row.name,
     age: row.age,
@@ -166,6 +167,7 @@ function appToRow(app) {
   return {
     id: app.id,
     opp_id: app.oppId,
+    player_id: app.playerId,
     club: app.club,
     name: app.name,
     age: app.age,
@@ -287,6 +289,8 @@ export default function ScoutLink() {
   const [opportunities, setOpportunities] = useState([]);
   const [applications, setApplications] = useState([]); // {id, oppId, ...playerInfo, status, paid}
   const [dataLoading, setDataLoading] = useState(true);
+  const [playerSession, setPlayerSession] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [selectedOpp, setSelectedOpp] = useState(null);
   const [payingApp, setPayingApp] = useState(null);
   const [applyForm, setApplyForm] = useState(emptyForm);
@@ -347,6 +351,24 @@ export default function ScoutLink() {
     loadData();
   }, []);
 
+  // Track the logged-in player's session (separate from admin login, which
+  // uses its own simple password check further below). Supabase handles
+  // the actual account creation, password checking, and session storage.
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      setPlayerSession(data.session);
+      setAuthLoading(false);
+    });
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setPlayerSession(session);
+    });
+
+    return () => {
+      listener?.subscription?.unsubscribe();
+    };
+  }, []);
+
   function changeLang(code) {
     setLang(code);
     try {
@@ -365,9 +387,15 @@ export default function ScoutLink() {
       showToast(t.apply.fillRequired);
       return;
     }
+    if (!playerSession) {
+      showToast(t.playerAuth.needAccountToApply);
+      setView("playerAuth");
+      return;
+    }
     const newApp = {
       id: "app-" + Date.now(),
       oppId: selectedOpp.id,
+      playerId: playerSession.user.id,
       club: selectedOpp.club,
       contactEmail: selectedOpp.contact?.email || "—",
       contactPhone: selectedOpp.contact?.phone || "—",
@@ -570,15 +598,38 @@ export default function ScoutLink() {
         />
       )}
 
-      {view === "myApps" && (
+      {view === "myApps" && !playerSession && (
+        <PlayerAuth
+          t={t}
+          mode="signin"
+          onSuccess={() => setView("myApps")}
+          onNavigate={setView}
+        />
+      )}
+
+      {view === "myApps" && playerSession && (
         <MyApplications
-          applications={applications}
+          applications={applications.filter((a) => a.playerId === playerSession.user.id)}
           setView={setView}
           onPay={(app) => {
             setPayingApp(app);
             setView("pay");
           }}
           t={t}
+          playerEmail={playerSession.user.email}
+          onSignOut={async () => {
+            await supabase.auth.signOut();
+            setView("home");
+          }}
+        />
+      )}
+
+      {view === "playerAuth" && (
+        <PlayerAuth
+          t={t}
+          mode="signup"
+          onSuccess={() => setView("browse")}
+          onNavigate={setView}
         />
       )}
 
@@ -1297,15 +1348,42 @@ const inputStyle = {
   fontSize: "0.92rem",
 };
 
-function MyApplications({ applications, setView, onPay, t }) {
+function MyApplications({ applications, setView, onPay, t, playerEmail, onSignOut }) {
   return (
     <div style={{ maxWidth: 780, margin: "0 auto", padding: "48px 28px 100px" }}>
-      <h2 style={{ fontFamily: "'Oswald', sans-serif", fontSize: "2rem", fontWeight: 700, margin: "0 0 8px" }}>
-        {t.myApps.title}
-      </h2>
-      <p style={{ color: "rgba(243,241,233,0.6)", margin: "0 0 30px", fontSize: "0.92rem" }}>
-        {t.myApps.sub}
-      </p>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
+        <div>
+          <h2 style={{ fontFamily: "'Oswald', sans-serif", fontSize: "2rem", fontWeight: 700, margin: "0 0 8px" }}>
+            {t.myApps.title}
+          </h2>
+          <p style={{ color: "rgba(243,241,233,0.6)", margin: "0 0 8px", fontSize: "0.92rem" }}>
+            {t.myApps.sub}
+          </p>
+          {playerEmail && (
+            <p style={{ color: "rgba(243,241,233,0.45)", margin: "0 0 30px", fontSize: "0.8rem" }}>
+              {t.playerAuth.signedInAs}: {playerEmail}
+            </p>
+          )}
+        </div>
+        {onSignOut && (
+          <button
+            onClick={onSignOut}
+            style={{
+              background: "rgba(243,241,233,0.06)",
+              color: "rgba(243,241,233,0.7)",
+              border: "1px solid rgba(243,241,233,0.15)",
+              borderRadius: 8,
+              padding: "8px 14px",
+              fontSize: "0.8rem",
+              fontWeight: 600,
+              cursor: "pointer",
+              fontFamily: "'Inter', sans-serif",
+            }}
+          >
+            {t.playerAuth.signOut}
+          </button>
+        )}
+      </div>
 
       {applications.length === 0 ? (
         <div
@@ -1601,6 +1679,121 @@ function PaymentScreen({ app, onConfirm, onBack, t }) {
         <div style={{ fontSize: "0.74rem", color: "rgba(243,241,233,0.4)", marginTop: 14, lineHeight: 1.5 }}>
           {t.pay.demoNote}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function PlayerAuth({ t, mode, onSuccess, onNavigate }) {
+  const [isSignUp, setIsSignUp] = useState(mode === "signup");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+
+    const action = isSignUp
+      ? supabase.auth.signUp({ email, password })
+      : supabase.auth.signInWithPassword({ email, password });
+
+    const { error: authError } = await action;
+    setLoading(false);
+
+    if (authError) {
+      setError(authError.message || t.playerAuth.genericError);
+      return;
+    }
+    onSuccess();
+  }
+
+  return (
+    <div style={{ maxWidth: 400, margin: "60px auto", padding: "0 28px" }}>
+      <div
+        style={{
+          background: "rgba(243,241,233,0.04)",
+          border: "1px solid rgba(243,241,233,0.12)",
+          borderRadius: 14,
+          padding: "32px 28px",
+        }}
+      >
+        <div
+          style={{
+            fontFamily: "'Oswald', sans-serif",
+            fontWeight: 700,
+            fontSize: "1.4rem",
+            marginBottom: 4,
+          }}
+        >
+          {isSignUp ? t.playerAuth.signUpTitle : t.playerAuth.signInTitle}
+        </div>
+        <p style={{ color: "rgba(243,241,233,0.55)", fontSize: "0.85rem", margin: "0 0 24px" }}>
+          {isSignUp ? t.playerAuth.signUpSub : t.playerAuth.signInSub}
+        </p>
+        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <Field label={t.playerAuth.email}>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              style={inputStyle}
+              placeholder={t.playerAuth.emailPh}
+              autoFocus
+            />
+          </Field>
+          <Field label={t.playerAuth.password}>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              style={inputStyle}
+              placeholder={t.playerAuth.passwordPh}
+            />
+          </Field>
+          {error && (
+            <div style={{ color: "#D98B7A", fontSize: "0.82rem" }}>{error}</div>
+          )}
+          <button
+            type="submit"
+            disabled={loading}
+            style={{
+              background: "#C9A54E",
+              color: "#0B1F17",
+              border: "none",
+              padding: "12px 20px",
+              borderRadius: 8,
+              fontWeight: 700,
+              fontSize: "0.9rem",
+              cursor: loading ? "default" : "pointer",
+              fontFamily: "'Inter', sans-serif",
+              marginTop: 4,
+              opacity: loading ? 0.6 : 1,
+            }}
+          >
+            {isSignUp ? t.playerAuth.signUpBtn : t.playerAuth.signInBtn}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setIsSignUp((s) => !s);
+              setError("");
+            }}
+            style={{
+              background: "none",
+              border: "none",
+              color: "rgba(243,241,233,0.6)",
+              fontSize: "0.82rem",
+              cursor: "pointer",
+              textDecoration: "underline",
+              fontFamily: "'Inter', sans-serif",
+            }}
+          >
+            {isSignUp ? t.playerAuth.switchToSignIn : t.playerAuth.switchToSignUp}
+          </button>
+        </form>
       </div>
     </div>
   );
