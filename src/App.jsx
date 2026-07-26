@@ -6,7 +6,7 @@ import { LANGUAGES, translations, positionKeys, positionLabels } from "./i18n.js
 // a backend config, and payment would be verified server-side against the
 // Bitcoin blockchain (e.g. via BTCPay Server, Coinbase Commerce, or a node).
 // This prototype simulates that confirmation client-side for demo purposes.
-const PLATFORM_BTC_ADDRESS = "bc1qexampleyourrealwalletaddresshere000";
+const PLATFORM_BTC_ADDRESS = "bc1qn9f7ymjx0p86c80la3a8wlkgnzpdk6fs7nee2q";
 const CONNECT_FEE_USD = 200;
 const BTC_USD_RATE = 64000; // demo rate only — real build would fetch live rate
 
@@ -328,7 +328,9 @@ export default function ScoutLink() {
       }}
     >
       <GoogleFonts />
-      <TopNav view={view} setView={setView} t={t} lang={lang} changeLang={changeLang} />
+      {view !== "admin" && view !== "adminLogin" && (
+        <TopNav view={view} setView={setView} t={t} lang={lang} changeLang={changeLang} />
+      )}
 
       {toast && (
         <div
